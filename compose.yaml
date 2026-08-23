@@ -25,7 +25,7 @@ services:
       - ./nitro/renderer-config.json:/usr/share/nginx/html/renderer-config.json
       - ./nitro/ui-config.json:/usr/share/nginx/html/ui-config.json
     ports:
-      - 3000:80
+      - 8084:80
     restart: unless-stopped
     networks: [nitro]
 
@@ -36,7 +36,7 @@ services:
     env_file:
       - .env
     ports:
-      - 3310:3306
+      - 127.0.0.1:3310:3306
     volumes:
       - ./db/data:/var/lib/mysql
       - ./db/conf.d:/etc/mysql/conf.d
@@ -79,7 +79,7 @@ services:
     env_file:
       - .env
     ports:
-      - 8080:80
+      - 8083:80
     volumes:
       - ./assets/nginx:/etc/nginx/conf.d/
       - ./assets/:/usr/share/nginx/html
@@ -111,7 +111,7 @@ services:
       - assets
       - arcturus
     ports:
-      - "8081:8080"
+      - "8085:8080"
     volumes:
       - "./.cms.env:/var/www/html/.env"
       - "./atomcms/storage:/var/www/html/storage/app/public"

@@ -44,11 +44,11 @@ RUN cp target/Apollyon-*.jar target/apollyon.jar
 
 
 
-FROM amazoncorretto:19-alpine
+FROM amazoncorretto:19
 
 WORKDIR /app
 
-RUN apk add --no-cache mariadb-client bash
+RUN yum install -y mariadb bash
 
 COPY --from=builder-ms4 /build/arcturus-community/target/emulator.jar /app/emulator.jar
 RUN mkdir -p /app/plugins

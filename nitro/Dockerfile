@@ -5,7 +5,7 @@ ARG COMMIT=33ff182
 
 WORKDIR /build
 
-RUN apk add --no-cache git
+RUN apk add --no-cache git python3 make g++
 RUN git clone --branch ${BRANCH} --recurse-submodules https://github.com/Gurkengewuerz/nitro.git .
 RUN git checkout $COMMIT
 RUN npm install --force
