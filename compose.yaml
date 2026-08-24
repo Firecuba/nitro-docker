@@ -6,6 +6,8 @@ services:
       - .env
     volumes:
       - ./assets/:/app/assets/
+      - ./tls/cert.pem:/app/ssl/cert.pem:ro
+      - ./tls/privkey.pem:/app/ssl/privkey.pem:ro
     ports:
       #- 3000:3000 # gameport
       #- 3001:3001 # rcon
@@ -24,8 +26,6 @@ services:
       - ./nitro/nginx.conf:/etc/nginx/conf.d/default.conf
       - ./nitro/renderer-config.json:/usr/share/nginx/html/renderer-config.json
       - ./nitro/ui-config.json:/usr/share/nginx/html/ui-config.json
-    ports:
-      - 8084:80
     restart: unless-stopped
     networks: [nitro]
 
@@ -78,11 +78,26 @@ services:
       - imgproxy
     env_file:
       - .env
-    ports:
-      - 8083:80
     volumes:
       - ./assets/nginx:/etc/nginx/conf.d/
       - ./assets/:/usr/share/nginx/html
+    networks: [nitro]
+
+  tls-proxy:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      - cms
+      - nitro
+      - assets
+    ports:
+      - "8085:8085"
+      - "8084:8084"
+      - "8083:8083"
+    volumes:
+      - ./tls/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./tls/cert.pem:/etc/nginx/tls/cert.pem:ro
+      - ./tls/privkey.pem:/etc/nginx/tls/privkey.pem:ro
     networks: [nitro]
 
   imager:
@@ -110,8 +125,6 @@ services:
     depends_on:
       - assets
       - arcturus
-    ports:
-      - "8085:8080"
     volumes:
       - "./.cms.env:/var/www/html/.env"
       - "./atomcms/storage:/var/www/html/storage/app/public"

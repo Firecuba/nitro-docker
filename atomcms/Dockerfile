@@ -28,6 +28,33 @@ RUN git config --global --add safe.directory /app
 RUN git clone --recurse-submodules https://github.com/ObjectRetros/atomcms.git .
 RUN git checkout $COMMIT
 
+# Upstream bug: badge/group-badge image URLs are hardcoded to /client/flash/c_images/...
+# instead of using the badges_path/group_badge_path settings, which breaks the shop and
+# room pages on any deployment that doesn't serve assets from the CMS's own webroot.
+COPY <<'EOF' /tmp/fix_badge_paths.php
+<?php
+$files = [
+    ["/app/resources/themes/atom/views/components/shop/packages.blade.php",
+        '/client/flash/c_images/album1584/{{$badge}}', "{{ setting('badges_path') }}/{{\$badge}}"],
+    ["/app/resources/themes/dusk/views/components/shop/package-content.blade.php",
+        '/client/flash/c_images/album1584/{{$badge}}', "{{ setting('badges_path') }}/{{\$badge}}"],
+    ["/app/resources/themes/atom/views/room/index.blade.php",
+        '/client/flash/c_images/Badgeparts/generated/{{ $room->guild->badge }}', "{{ setting('group_badge_path') }}/{{ \$room->guild->badge }}"],
+    ["/app/resources/themes/dusk/views/room/index.blade.php",
+        '/client/flash/c_images/Badgeparts/generated/{{ $room->guild->badge }}', "{{ setting('group_badge_path') }}/{{ \$room->guild->badge }}"],
+];
+foreach ($files as [$path, $old, $new]) {
+    $content = file_get_contents($path);
+    if (strpos($content, $old) === false) {
+        fwrite(STDERR, "fix_badge_paths: pattern not found in $path (upstream may have changed)\n");
+        exit(1);
+    }
+    file_put_contents($path, str_replace($old, $new, $content));
+    echo "fix_badge_paths: patched $path\n";
+}
+EOF
+RUN php /tmp/fix_badge_paths.php && rm /tmp/fix_badge_paths.php
+
 # Install composer dependencies
 RUN composer install \
     --no-interaction \
@@ -118,10 +145,13 @@ location @fallback {
     try_files $uri /index.php?$query_string;
 }
 
-# Static file caching
+# Static file caching. try_files falls through to Laravel for any matching
+# extension that isn't a physical file (e.g. Livewire's dynamic /livewire/livewire.js
+# route), instead of 404ing before the request ever reaches PHP-FPM.
 location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff|woff2|ttf|eot)$ {
     expires 1y;
     add_header Cache-Control "public, immutable";
+    try_files $uri /index.php?$query_string;
 }
 EOF
 
