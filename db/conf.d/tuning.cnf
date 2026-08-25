@@ -1,0 +1,10 @@
+[mysqld]
+# Tuned for a dedicated single-hotel Raspberry Pi deployment (4GB RAM total,
+# 768M container memory limit). Stock MySQL 8 defaults assume a general-
+# purpose server; these values trade off headroom we don't need (default
+# max_connections, full performance_schema instrumentation) for buffer pool
+# space actually used by Arcturus/AtomCMS's query patterns.
+innodb_buffer_pool_size = 384M
+max_connections = 60
+performance_schema = OFF
+skip-name-resolve

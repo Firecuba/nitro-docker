@@ -1,5 +1,7 @@
 db/*
 !db/.gitkeep
+!db/conf.d/
+!db/conf.d/tuning.cnf
 assets/assets
 assets/update_badge_names.sql
 assets/translation/gamedata/
