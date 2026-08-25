@@ -37,7 +37,9 @@ RUN cp target/Morningstar*-with-dependencies.jar target/emulator.jar
 
 
 WORKDIR /build/apollyon
+ARG APOLLYON_COMMIT=4bc5cc3
 RUN git clone https://git.mc8051.de/nitro/apollyon-ms4.git .
+RUN git checkout $APOLLYON_COMMIT
 RUN sed -i 's#<version>4.0-DEVPREVIEW</version>#<version>[1.0.0,)</version>#g' pom.xml
 RUN mvn package
 RUN cp target/Apollyon-*.jar target/apollyon.jar
@@ -82,4 +84,4 @@ COPY --from=builder-mentionplugin /build/mentionplugin/target/MentionPlugin-*-ja
 COPY --from=builder-prizeplugin /build/PrizePlugin/target/PrizePlugin-*-jar-with-dependencies.jar /app/plugins/prizeplugin.jar
 COPY --from=builder-nftplugin /build/NFTPlugin/target/NFTAvatarPlugin-*-jar-with-dependencies.jar /app/plugins/nftplugin.jar
 
-ENTRYPOINT ["/usr/bin/java", "-jar", "/app/emulator.jar"]
+ENTRYPOINT ["/usr/bin/java", "-Xms128m", "-Xmx384m", "-XX:+ExitOnOutOfMemoryError", "-jar", "/app/emulator.jar"]

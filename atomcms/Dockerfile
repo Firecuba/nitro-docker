@@ -1,7 +1,7 @@
 # Stage 1: Composer dependencies
-FROM php:8.4-cli-alpine AS composer-builder
+FROM php:8.5-cli-alpine AS composer-builder
 
-ARG COMMIT=53ea66d
+ARG COMMIT=f77e2b6
 
 WORKDIR /app
 
@@ -12,13 +12,18 @@ RUN apk add --no-cache \
     unzip \
     icu-dev \
     libzip-dev \
+    libpng-dev \
+    libjpeg-turbo-dev \
+    freetype-dev \
     linux-headers
 
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg
 RUN docker-php-ext-install -j$(nproc) \
     sockets \
     intl \
     pdo_mysql \
-    zip
+    zip \
+    gd
 
 # Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
@@ -28,57 +33,43 @@ RUN git config --global --add safe.directory /app
 RUN git clone --recurse-submodules https://github.com/ObjectRetros/atomcms.git .
 RUN git checkout $COMMIT
 
-# Upstream bug: badge/group-badge image URLs are hardcoded to /client/flash/c_images/...
-# instead of using the badges_path/group_badge_path settings, which breaks the shop and
-# room pages on any deployment that doesn't serve assets from the CMS's own webroot.
-COPY <<'EOF' /tmp/fix_badge_paths.php
-<?php
-$files = [
-    ["/app/resources/themes/atom/views/components/shop/packages.blade.php",
-        '/client/flash/c_images/album1584/{{$badge}}', "{{ setting('badges_path') }}/{{\$badge}}"],
-    ["/app/resources/themes/dusk/views/components/shop/package-content.blade.php",
-        '/client/flash/c_images/album1584/{{$badge}}', "{{ setting('badges_path') }}/{{\$badge}}"],
-    ["/app/resources/themes/atom/views/room/index.blade.php",
-        '/client/flash/c_images/Badgeparts/generated/{{ $room->guild->badge }}', "{{ setting('group_badge_path') }}/{{ \$room->guild->badge }}"],
-    ["/app/resources/themes/dusk/views/room/index.blade.php",
-        '/client/flash/c_images/Badgeparts/generated/{{ $room->guild->badge }}', "{{ setting('group_badge_path') }}/{{ \$room->guild->badge }}"],
-];
-foreach ($files as [$path, $old, $new]) {
-    $content = file_get_contents($path);
-    if (strpos($content, $old) === false) {
-        fwrite(STDERR, "fix_badge_paths: pattern not found in $path (upstream may have changed)\n");
-        exit(1);
-    }
-    file_put_contents($path, str_replace($old, $new, $content));
-    echo "fix_badge_paths: patched $path\n";
-}
-EOF
-RUN php /tmp/fix_badge_paths.php && rm /tmp/fix_badge_paths.php
-
-# Upstream bug: UserBadge (a user's actual earned badges, shown in Housekeeping > Users >
-# Badges) never implemented HasBadge, unlike Achievement/Permission/WebsiteTeam which all do.
-# HabboBadgeColumn silently returns '' for any record missing these methods, so every user's
-# badge list rendered as broken images.
+# Upstream bug (re-verified against the current codebase after the 53ea66d -> f77e2b6
+# update, since upstream rewrote the whole badge subsystem in between): UserBadge (a
+# user's actual earned badges, shown in Housekeeping > Users > Badges) still doesn't
+# implement the HasBadge interface, unlike every other model HabboBadgeColumn expects.
+# HabboBadgeColumn::getBadgePath()/getBadgeName() silently return '' for any record that
+# isn't a HasBadge instance, so every user's badge list renders as broken images.
+# (The old shop-package and room-guild-badge variants of this bug are gone: shop packages
+# now use a direct image upload (Storage::url($package->image)) instead of a badge code,
+# and the website no longer has a room/guild detail page at all.)
 COPY <<'EOF' /tmp/fix_user_badge.php
 <?php
 $path = "/app/app/Models/Game/Player/UserBadge.php";
 $content = file_get_contents($path);
 
-$old = "use App\Models\User;\nuse Illuminate\Database\Eloquent\Model;\nuse Illuminate\Database\Eloquent\Relations\BelongsTo;\n\nclass UserBadge extends Model\n{";
-$new = "use App\Models\User;\nuse App\Models\Compositions\HasBadge;\nuse Illuminate\Database\Eloquent\Model;\nuse Illuminate\Database\Eloquent\Relations\BelongsTo;\n\nclass UserBadge extends Model implements HasBadge\n{";
-if (strpos($content, $old) === false) {
-    fwrite(STDERR, "fix_user_badge: class declaration pattern not found (upstream may have changed)\n");
+$old1 = "use Illuminate\Database\Eloquent\Relations\BelongsTo;";
+$new1 = "use App\Models\Compositions\HasBadge;\nuse Illuminate\Database\Eloquent\Relations\BelongsTo;";
+if (strpos($content, $old1) === false) {
+    fwrite(STDERR, "fix_user_badge: import line not found (upstream may have changed)\n");
     exit(1);
 }
-$content = str_replace($old, $new, $content);
+$content = str_replace($old1, $new1, $content);
 
-$old2 = "    public function user(): BelongsTo\n    {\n        return \$this->belongsTo(User::class, 'id');\n    }\n}";
-$new2 = "    public function user(): BelongsTo\n    {\n        return \$this->belongsTo(User::class, 'id');\n    }\n\n    public function getBadgePath(): string\n    {\n        return sprintf('%s%s.gif', setting('badges_path'), \$this->getBadgeName());\n    }\n\n    public function getBadgeName(): string\n    {\n        return \$this->badge_code ?: '';\n    }\n}";
+$old2 = "class UserBadge extends Model\n{";
+$new2 = "class UserBadge extends Model implements HasBadge\n{";
 if (strpos($content, $old2) === false) {
-    fwrite(STDERR, "fix_user_badge: closing brace pattern not found (upstream may have changed)\n");
+    fwrite(STDERR, "fix_user_badge: class declaration not found (upstream may have changed)\n");
     exit(1);
 }
 $content = str_replace($old2, $new2, $content);
+
+$old3 = "    public function user(): BelongsTo\n    {\n        return \$this->belongsTo(User::class, 'user_id');\n    }\n}";
+$new3 = "    public function user(): BelongsTo\n    {\n        return \$this->belongsTo(User::class, 'user_id');\n    }\n\n    public function getBadgePath(): string\n    {\n        return sprintf('%s%s.gif', setting('badges_path'), \$this->getBadgeName());\n    }\n\n    public function getBadgeName(): string\n    {\n        return \$this->badge_code ?: '';\n    }\n}";
+if (strpos($content, $old3) === false) {
+    fwrite(STDERR, "fix_user_badge: closing brace pattern not found (upstream may have changed)\n");
+    exit(1);
+}
+$content = str_replace($old3, $new3, $content);
 
 file_put_contents($path, $content);
 echo "fix_user_badge: patched $path\n";
@@ -97,7 +88,7 @@ $content = file_get_contents($path);
 
 $old = <<<'OLD'
     Route::middleware(['guest', 'throttle:15,1'])->withoutMiddleware('force.staff.2fa')->group(function () {
-        Route::get('/login', static fn() => to_route('welcome'))->name('login');
+        Route::get('/login', static fn () => to_route('welcome'))->name('login');
         Route::get('/', HomeController::class)->name('welcome');
 
         Route::get('/register', [RegisteredUserController::class, 'create']);
@@ -105,7 +96,7 @@ OLD;
 
 $new = <<<'NEW'
     Route::middleware('guest')->withoutMiddleware('force.staff.2fa')->group(function () {
-        Route::get('/login', static fn() => to_route('welcome'))->name('login');
+        Route::get('/login', static fn () => to_route('welcome'))->name('login');
         Route::get('/', HomeController::class)->name('welcome');
     });
 
@@ -152,7 +143,7 @@ RUN rm -rf node_modules
 
 
 # Stage 3: Final image with serversideup/php (nginx + PHP-FPM)
-FROM serversideup/php:8.4-fpm-nginx-alpine
+FROM serversideup/php:8.5-fpm-nginx-alpine
 
 ENV PHP_OPCACHE_ENABLE=1
 

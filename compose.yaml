@@ -1,3 +1,9 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   arcturus:
     build:
@@ -6,6 +12,7 @@ services:
       - .env
     volumes:
       - ./assets/:/app/assets/
+      - /mnt/nvme/atom-data/assets-swf:/app/assets/swf
       - ./tls/cert.pem:/app/ssl/cert.pem:ro
       - ./tls/privkey.pem:/app/ssl/privkey.pem:ro
     ports:
@@ -17,6 +24,8 @@ services:
         condition: service_healthy
     restart: unless-stopped
     networks: [nitro]
+    logging: *default-logging
+    mem_limit: 512m
 
   nitro:
     build:
@@ -29,6 +38,8 @@ services:
       - ./nitro/ui-config.json:/usr/share/nginx/html/ui-config.json
     restart: unless-stopped
     networks: [nitro]
+    logging: *default-logging
+    mem_limit: 64m
 
   db:
     image: mysql:8
@@ -50,6 +61,8 @@ services:
       timeout: 5s
       retries: 30
       start_period: 60s
+    logging: *default-logging
+    mem_limit: 768m
 
   backup:
     image: tiredofit/db-backup:4.0.19
@@ -76,6 +89,8 @@ services:
       - DB01_NAME=$MYSQL_DATABASE
     restart: unless-stopped
     networks: [nitro]
+    logging: *default-logging
+    mem_limit: 128m
 
   assets:
     image: nginx:alpine
@@ -88,7 +103,10 @@ services:
     volumes:
       - ./assets/nginx:/etc/nginx/conf.d/
       - ./assets/:/usr/share/nginx/html
+      - /mnt/nvme/atom-data/assets-swf:/usr/share/nginx/html/swf
     networks: [nitro]
+    logging: *default-logging
+    mem_limit: 128m
 
   tls-proxy:
     image: nginx:alpine
@@ -106,6 +124,8 @@ services:
       - ./tls/cert.pem:/etc/nginx/tls/cert.pem:ro
       - ./tls/privkey.pem:/etc/nginx/tls/privkey.pem:ro
     networks: [nitro]
+    logging: *default-logging
+    mem_limit: 64m
 
   imager:
     build:
@@ -114,8 +134,11 @@ services:
       - .env
     volumes:
       - ./assets/:/app/assets/
+      - /mnt/nvme/atom-data/assets-swf:/app/assets/swf
     restart: unless-stopped
     networks: [nitro]
+    logging: *default-logging
+    mem_limit: 256m
 
   imgproxy:
     image: ghcr.io/willnorris/imageproxy
@@ -125,6 +148,8 @@ services:
       - .env
     restart: unless-stopped
     networks: [nitro]
+    logging: *default-logging
+    mem_limit: 128m
 
   cms:
     build:
@@ -143,6 +168,8 @@ services:
       - "./atomcms/gamedata:/var/www/html/public/gamedata"
     restart: unless-stopped
     networks: [nitro]
+    logging: *default-logging
+    mem_limit: 256m
 
 networks:
   nitro:
