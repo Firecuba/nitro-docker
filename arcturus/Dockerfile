@@ -44,6 +44,30 @@ RUN cp target/Apollyon-*.jar target/apollyon.jar
 
 
 
+FROM maven:3-amazoncorretto-19 AS builder-mentionplugin
+COPY --from=builder-ms4 /root/.m2 /root/.m2
+WORKDIR /build/mentionplugin
+ADD plugins-src/mentionplugin/ .
+RUN mvn package
+
+
+
+FROM maven:3-amazoncorretto-19 AS builder-prizeplugin
+COPY --from=builder-ms4 /root/.m2 /root/.m2
+WORKDIR /build/PrizePlugin
+ADD plugins-src/PrizePlugin/ .
+RUN mvn package
+
+
+
+FROM maven:3-amazoncorretto-19 AS builder-nftplugin
+COPY --from=builder-ms4 /root/.m2 /root/.m2
+WORKDIR /build/NFTPlugin
+ADD plugins-src/NFTPlugin/ .
+RUN mvn package
+
+
+
 FROM amazoncorretto:19
 
 WORKDIR /app
@@ -54,5 +78,8 @@ COPY --from=builder-ms4 /build/arcturus-community/target/emulator.jar /app/emula
 RUN mkdir -p /app/plugins
 COPY --from=builder-ms3 /build/arcturus-ws/target/websockets.jar /app/plugins/websockets.jar
 COPY --from=builder-ms4 /build/apollyon/target/apollyon.jar /app/plugins/apollyon.jar
+COPY --from=builder-mentionplugin /build/mentionplugin/target/MentionPlugin-*-jar-with-dependencies.jar /app/plugins/mentionplugin.jar
+COPY --from=builder-prizeplugin /build/PrizePlugin/target/PrizePlugin-*-jar-with-dependencies.jar /app/plugins/prizeplugin.jar
+COPY --from=builder-nftplugin /build/NFTPlugin/target/NFTAvatarPlugin-*-jar-with-dependencies.jar /app/plugins/nftplugin.jar
 
 ENTRYPOINT ["/usr/bin/java", "-jar", "/app/emulator.jar"]

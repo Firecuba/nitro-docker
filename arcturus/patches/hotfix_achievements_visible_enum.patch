@@ -1,0 +1,13 @@
+diff --git a/src/main/java/com/eu/habbo/habbohotel/achievements/AchievementManager.java b/src/main/java/com/eu/habbo/habbohotel/achievements/AchievementManager.java
+index 0000000..0000000 100644
+--- a/src/main/java/com/eu/habbo/habbohotel/achievements/AchievementManager.java
++++ b/src/main/java/com/eu/habbo/habbohotel/achievements/AchievementManager.java
+@@ -239,7 +239,7 @@ public class AchievementManager {
+             }
+
+             try (Connection connection = Emulator.getDatabase().getDataSource().getConnection()) {
+-                try (Statement statement = connection.createStatement(); ResultSet set = statement.executeQuery("SELECT * FROM achievements WHERE visible = 1")) {
++                try (Statement statement = connection.createStatement(); ResultSet set = statement.executeQuery("SELECT * FROM achievements WHERE visible = '1'")) {
+                     while (set.next()) {
+                         if (!this.achievements.containsKey(set.getString("name"))) {
+                             this.achievements.put(set.getString("name"), new Achievement(set));

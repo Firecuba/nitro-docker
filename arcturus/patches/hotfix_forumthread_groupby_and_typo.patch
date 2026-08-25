@@ -1,0 +1,27 @@
+diff --git a/src/main/java/com/eu/habbo/habbohotel/guilds/forums/ForumThread.java b/src/main/java/com/eu/habbo/habbohotel/guilds/forums/ForumThread.java
+index 0000000..0000000 100644
+--- a/src/main/java/com/eu/habbo/habbohotel/guilds/forums/ForumThread.java
++++ b/src/main/java/com/eu/habbo/habbohotel/guilds/forums/ForumThread.java
+@@ -156,7 +156,7 @@ public class ForumThread {
+                 "WHERE `id` IN (" +
+                 "SELECT MAX(id) " +
+                 "FROM `guilds_forums_comments` B " +
+-                "GROUP BY `thread_id` AND B.`id` " +
++                "GROUP BY `thread_id` " +
+                 "ORDER BY B.`id` " +
+                 ") " +
+                 "ORDER BY `id` DESC " +
+@@ -195,10 +195,10 @@ public class ForumThread {
+                         "WHERE `id` IN (" +
+                         "SELECT MAX(id) " +
+                         "FROM `guilds_forums_comments` B " +
+-                        "GROUP BY `thread_id` AND b.`id`" +
++                        "GROUP BY `thread_id`" +
+                         "ORDER BY B.`id` " +
+                         ") " +
+                         "ORDER BY `id` DESC " +
+-                        ") B ON A.`iód` = B.`thread_id` " +
++                        ") B ON A.`id` = B.`thread_id` " +
+                         "WHERE A.`id` = ? " +
+                         "ORDER BY A.`pinned` DESC, B.`created_at` DESC " +
+                         "LIMIT 1"

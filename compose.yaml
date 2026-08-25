@@ -13,7 +13,8 @@ services:
       #- 3001:3001 # rcon
       - 2096:2096 # websocket port
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     restart: unless-stopped
     networks: [nitro]
 
@@ -43,6 +44,12 @@ services:
       - ./db/dumps:/docker-entrypoint-initdb.d
     restart: unless-stopped
     networks: [nitro]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
 
   backup:
     image: tiredofit/db-backup:4.0.19
@@ -123,8 +130,12 @@ services:
     build:
       context: atomcms
     depends_on:
-      - assets
-      - arcturus
+      assets:
+        condition: service_started
+      arcturus:
+        condition: service_started
+      db:
+        condition: service_healthy
     volumes:
       - "./.cms.env:/var/www/html/.env"
       - "./atomcms/storage:/var/www/html/storage/app/public"

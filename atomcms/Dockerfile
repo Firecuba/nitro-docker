@@ -55,6 +55,73 @@ foreach ($files as [$path, $old, $new]) {
 EOF
 RUN php /tmp/fix_badge_paths.php && rm /tmp/fix_badge_paths.php
 
+# Upstream bug: UserBadge (a user's actual earned badges, shown in Housekeeping > Users >
+# Badges) never implemented HasBadge, unlike Achievement/Permission/WebsiteTeam which all do.
+# HabboBadgeColumn silently returns '' for any record missing these methods, so every user's
+# badge list rendered as broken images.
+COPY <<'EOF' /tmp/fix_user_badge.php
+<?php
+$path = "/app/app/Models/Game/Player/UserBadge.php";
+$content = file_get_contents($path);
+
+$old = "use App\Models\User;\nuse Illuminate\Database\Eloquent\Model;\nuse Illuminate\Database\Eloquent\Relations\BelongsTo;\n\nclass UserBadge extends Model\n{";
+$new = "use App\Models\User;\nuse App\Models\Compositions\HasBadge;\nuse Illuminate\Database\Eloquent\Model;\nuse Illuminate\Database\Eloquent\Relations\BelongsTo;\n\nclass UserBadge extends Model implements HasBadge\n{";
+if (strpos($content, $old) === false) {
+    fwrite(STDERR, "fix_user_badge: class declaration pattern not found (upstream may have changed)\n");
+    exit(1);
+}
+$content = str_replace($old, $new, $content);
+
+$old2 = "    public function user(): BelongsTo\n    {\n        return \$this->belongsTo(User::class, 'id');\n    }\n}";
+$new2 = "    public function user(): BelongsTo\n    {\n        return \$this->belongsTo(User::class, 'id');\n    }\n\n    public function getBadgePath(): string\n    {\n        return sprintf('%s%s.gif', setting('badges_path'), \$this->getBadgeName());\n    }\n\n    public function getBadgeName(): string\n    {\n        return \$this->badge_code ?: '';\n    }\n}";
+if (strpos($content, $old2) === false) {
+    fwrite(STDERR, "fix_user_badge: closing brace pattern not found (upstream may have changed)\n");
+    exit(1);
+}
+$content = str_replace($old2, $new2, $content);
+
+file_put_contents($path, $content);
+echo "fix_user_badge: patched $path\n";
+EOF
+RUN php /tmp/fix_user_badge.php && rm /tmp/fix_user_badge.php
+
+# Upstream bug: the homepage ('/') and the no-op '/login' redirect are grouped under the
+# same throttle:15,1 limiter as the brute-force-sensitive auth routes (register, password
+# reset). 15 requests/min is meant to slow down credential-stuffing on those POST routes,
+# but it also caps plain homepage visits, so a handful of page loads/reloads in a minute
+# (mobile Safari retries, multiple tabs, etc.) return 429 on the homepage itself.
+COPY <<'EOF' /tmp/fix_homepage_throttle.php
+<?php
+$path = "/app/routes/web.php";
+$content = file_get_contents($path);
+
+$old = <<<'OLD'
+    Route::middleware(['guest', 'throttle:15,1'])->withoutMiddleware('force.staff.2fa')->group(function () {
+        Route::get('/login', static fn() => to_route('welcome'))->name('login');
+        Route::get('/', HomeController::class)->name('welcome');
+
+        Route::get('/register', [RegisteredUserController::class, 'create']);
+OLD;
+
+$new = <<<'NEW'
+    Route::middleware('guest')->withoutMiddleware('force.staff.2fa')->group(function () {
+        Route::get('/login', static fn() => to_route('welcome'))->name('login');
+        Route::get('/', HomeController::class)->name('welcome');
+    });
+
+    Route::middleware(['guest', 'throttle:15,1'])->withoutMiddleware('force.staff.2fa')->group(function () {
+        Route::get('/register', [RegisteredUserController::class, 'create']);
+NEW;
+
+if (strpos($content, $old) === false) {
+    fwrite(STDERR, "fix_homepage_throttle: pattern not found (upstream may have changed)\n");
+    exit(1);
+}
+file_put_contents($path, str_replace($old, $new, $content));
+echo "fix_homepage_throttle: patched $path\n";
+EOF
+RUN php /tmp/fix_homepage_throttle.php && rm /tmp/fix_homepage_throttle.php
+
 # Install composer dependencies
 RUN composer install \
     --no-interaction \
