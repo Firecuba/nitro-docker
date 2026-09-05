@@ -1,0 +1,21 @@
+diff --git a/src/main/java/com/eu/habbo/habbohotel/modtool/ModToolManager.java b/src/main/java/com/eu/habbo/habbohotel/modtool/ModToolManager.java
+index 0227d0b3..be12c6cb 100644
+--- a/src/main/java/com/eu/habbo/habbohotel/modtool/ModToolManager.java
++++ b/src/main/java/com/eu/habbo/habbohotel/modtool/ModToolManager.java
+@@ -309,6 +309,7 @@ public class ModToolManager {
+                 "SELECT " +
+                 "users.username as name, " +
+                 "room_enter_log.* " +
++                (groupUser ? ", ROW_NUMBER() OVER (PARTITION BY room_enter_log.user_id ORDER BY timestamp DESC) AS rn " : "") +
+                 "FROM" +
+                 "`room_enter_log` " +
+                 "INNER JOIN " +
+@@ -323,7 +324,7 @@ public class ModToolManager {
+                 "ORDER BY " +
+                 "timestamp " +
+                 "DESC LIMIT ?) x " +
+-                (groupUser ? "GROUP BY user_id" : "") +
++                (groupUser ? "WHERE x.rn = 1" : "") +
+                 ";")) {
+             statement.setInt(1, room.getId());
+ 

@@ -1,0 +1,38 @@
+diff --git a/src/main/java/com/eu/habbo/habbohotel/polls/PollQuestion.java b/src/main/java/com/eu/habbo/habbohotel/polls/PollQuestion.java
+index 04b42f6..efd1ae7 100644
+--- a/src/main/java/com/eu/habbo/habbohotel/polls/PollQuestion.java
++++ b/src/main/java/com/eu/habbo/habbohotel/polls/PollQuestion.java
+@@ -4,6 +4,8 @@ import com.eu.habbo.messages.ISerialize;
+ import com.eu.habbo.messages.ServerMessage;
+ import gnu.trove.map.hash.THashMap;
+ import lombok.Getter;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
+ 
+ import java.sql.ResultSet;
+ import java.sql.SQLException;
+@@ -13,6 +15,7 @@ import java.util.Map;
+ 
+ @Getter
+ public class PollQuestion implements ISerialize, Comparable<PollQuestion> {
++    private static final Logger LOGGER = LoggerFactory.getLogger(PollQuestion.class);
+ 
+     private  final int id;
+     private  final int parentId;
+@@ -37,8 +40,14 @@ public class PollQuestion implements ISerialize, Comparable<PollQuestion> {
+         String opts = set.getString("options");
+ 
+         if (this.type == 1 || this.type == 2) {
+-            for (int i = 0; i < opts.split(";").length; i++) {
+-                this.options.put(i, new String[]{opts.split(";")[i].split(":")[0], opts.split(";")[i].split(":")[1]});
++            String[] entries = opts.split(";");
++            for (int i = 0; i < entries.length; i++) {
++                String[] kv = entries[i].split(":");
++                if (kv.length < 2) {
++                    LOGGER.warn("Skipping malformed poll option '{}' for question {} (expected 'label:value')", entries[i], this.id);
++                    continue;
++                }
++                this.options.put(i, new String[]{kv[0], kv[1]});
+             }
+         }
+     }

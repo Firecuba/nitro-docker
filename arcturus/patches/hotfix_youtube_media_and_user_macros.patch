@@ -1,0 +1,614 @@
+diff --git a/src/main/java/com/eu/habbo/habbohotel/items/interactions/InteractionYoutubeTV.java b/src/main/java/com/eu/habbo/habbohotel/items/interactions/InteractionYoutubeTV.java
+index 4da6bb8..50b9ab3 100644
+--- a/src/main/java/com/eu/habbo/habbohotel/items/interactions/InteractionYoutubeTV.java
++++ b/src/main/java/com/eu/habbo/habbohotel/items/interactions/InteractionYoutubeTV.java
+@@ -8,6 +8,7 @@ import com.eu.habbo.habbohotel.rooms.Room;
+ import com.eu.habbo.habbohotel.rooms.RoomUnit;
+ import com.eu.habbo.habbohotel.users.HabboItem;
+ import com.eu.habbo.messages.ServerMessage;
++import com.eu.habbo.messages.outgoing.rooms.items.youtube.CustomVideoDisplayMessageComposer;
+ import com.eu.habbo.messages.outgoing.rooms.items.youtube.YoutubeDisplayVideoMessageComposer;
+ import com.eu.habbo.threading.runnables.YoutubeAdvanceVideo;
+ 
+@@ -18,6 +19,17 @@ import java.util.concurrent.ScheduledFuture;
+ public class InteractionYoutubeTV extends HabboItem {
+     public YoutubeManager.YoutubePlaylist currentPlaylist = null;
+     public YoutubeManager.YoutubeVideo currentVideo = null;
++    // Set instead of currentVideo when the screen is showing a directly-uploaded video
++    // file (self-hosted, not a YouTube ID) -- the two are mutually exclusive.
++    public String customVideoUrl = null;
++    // A static picture (gallery preset or admin-uploaded image) shown on the screen.
++    // Mutually exclusive with customVideoUrl -- setting a video clears the picture and
++    // vice versa, since the screen only has one THUMBNAIL_URL slot to show.
++    public String customPictureUrl = null;
++    // A decorative frame/badge overlay composited on top of whatever's currently
++    // showing (YouTube video, uploaded video, or picture). Independent of the other
++    // three fields -- setting or clearing it never touches video/picture state.
++    public String overlayUrl = null;
+     public int startedWatchingAt = 0;
+     public int offset = 0;
+     public boolean playing = true;
+@@ -51,14 +63,28 @@ public class InteractionYoutubeTV extends HabboItem {
+         if (this.getExtradata().length() == 0)
+             this.setExtradata("");
+ 
++        boolean hasCustomUrl = this.customVideoUrl != null && !this.customVideoUrl.isEmpty();
++        boolean hasCustomPicture = !hasCustomUrl && this.customPictureUrl != null && !this.customPictureUrl.isEmpty();
++        boolean hasOverlay = this.overlayUrl != null && !this.overlayUrl.isEmpty();
++
+         serverMessage.appendInt(1 + (this.isLimited() ? 256 : 0));
+-        serverMessage.appendInt(1);
++        serverMessage.appendInt(1 + (hasCustomUrl ? 1 : 0) + (hasOverlay ? 1 : 0));
+         serverMessage.appendString("THUMBNAIL_URL");
+-        if (this.currentVideo == null) {
++        if (hasCustomPicture) {
++            serverMessage.appendString(this.customPictureUrl);
++        } else if (this.currentVideo == null) {
+             serverMessage.appendString("");
+         } else {
+             serverMessage.appendString(Emulator.getConfig().getValue("imager.url.youtube").replace("%video%", this.currentVideo.getId()));
+         }
++        if (hasCustomUrl) {
++            serverMessage.appendString("CUSTOM_VIDEO_URL");
++            serverMessage.appendString(this.customVideoUrl);
++        }
++        if (hasOverlay) {
++            serverMessage.appendString("OVERLAY_URL");
++            serverMessage.appendString(this.overlayUrl);
++        }
+ 
+         super.serializeExtradata(serverMessage);
+     }
+@@ -73,6 +99,9 @@ public class InteractionYoutubeTV extends HabboItem {
+ 
+         this.currentVideo = null;
+         this.currentPlaylist = null;
++        this.customVideoUrl = null;
++        this.customPictureUrl = null;
++        this.overlayUrl = null;
+         this.startedWatchingAt = 0;
+         this.offset = 0;
+     }
+@@ -88,10 +117,12 @@ public class InteractionYoutubeTV extends HabboItem {
+     public void onClick(GameClient client, Room room, Object[] objects) throws Exception {
+         super.onClick(client, room, objects);
+ 
+-        if (this.currentVideo != null) {
++        if (this.customVideoUrl != null && !this.customVideoUrl.isEmpty()) {
++            client.sendResponse(new CustomVideoDisplayMessageComposer(this.getId(), this.customVideoUrl));
++        } else if (this.currentVideo != null) {
+             int startTime = this.offset;
+             if (this.playing) startTime += Emulator.getIntUnixTimestamp() - this.startedWatchingAt;
+             client.sendResponse(new YoutubeDisplayVideoMessageComposer(this.getId(), this.currentVideo, this.playing, startTime));
+         }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/src/main/java/com/eu/habbo/messages/PacketManager.java b/src/main/java/com/eu/habbo/messages/PacketManager.java
+index a268f7e..2cd138c 100644
+--- a/src/main/java/com/eu/habbo/messages/PacketManager.java
++++ b/src/main/java/com/eu/habbo/messages/PacketManager.java
+@@ -51,6 +51,10 @@ import com.eu.habbo.messages.incoming.rooms.items.rentablespace.RentableSpaceCan
+ import com.eu.habbo.messages.incoming.rooms.items.rentablespace.RentableSpaceRentEvent;
+ import com.eu.habbo.messages.incoming.rooms.items.youtube.ControlYoutubeDisplayPlaybackEvent;
+ import com.eu.habbo.messages.incoming.rooms.items.youtube.GetYoutubeDisplayStatusEvent;
++import com.eu.habbo.messages.incoming.rooms.items.youtube.SetCustomPictureEvent;
++import com.eu.habbo.messages.incoming.rooms.items.youtube.SetOverlayEvent;
++import com.eu.habbo.messages.incoming.rooms.items.youtube.SetCustomUploadedVideoEvent;
++import com.eu.habbo.messages.incoming.rooms.items.youtube.SetYoutubeCustomVideoEvent;
+ import com.eu.habbo.messages.incoming.rooms.items.youtube.SetYoutubeDisplayPlaylistEvent;
+ import com.eu.habbo.messages.incoming.rooms.pets.*;
+ import com.eu.habbo.messages.incoming.rooms.promotions.EditEventEvent;
+@@ -452,6 +456,12 @@ public class PacketManager {
+         this.registerHandler(Incoming.unbanUserFromRoomEvent, UnbanUserFromRoomEvent.class);
+         this.registerHandler(Incoming.getUserTagsEvent, GetUserTagsEvent.class);
+         this.registerHandler(Incoming.getYoutubeDisplayStatusEvent, GetYoutubeDisplayStatusEvent.class);
++        this.registerHandler(Incoming.setYoutubeCustomVideoEvent, SetYoutubeCustomVideoEvent.class);
++        this.registerHandler(Incoming.setCustomUploadedVideoEvent, SetCustomUploadedVideoEvent.class);
++        this.registerHandler(Incoming.setCustomPictureEvent, SetCustomPictureEvent.class);
++        this.registerHandler(Incoming.setOverlayEvent, SetOverlayEvent.class);
++        this.registerHandler(Incoming.throwEffectAtUserEvent, ThrowEffectAtUserEvent.class);
++        this.registerHandler(Incoming.pullUserEvent, PullUserEvent.class);
+         this.registerHandler(Incoming.controlYoutubeDisplayPlaybackEvent, ControlYoutubeDisplayPlaybackEvent.class);
+         this.registerHandler(Incoming.setYoutubeDisplayPlaylistEvent, SetYoutubeDisplayPlaylistEvent.class);
+         this.registerHandler(Incoming.addFavouriteRoomEvent, AddFavouriteRoomEvent.class);
+diff --git a/src/main/java/com/eu/habbo/messages/incoming/Incoming.java b/src/main/java/com/eu/habbo/messages/incoming/Incoming.java
+index ed2377c..d0ec923 100644
+--- a/src/main/java/com/eu/habbo/messages/incoming/Incoming.java
++++ b/src/main/java/com/eu/habbo/messages/incoming/Incoming.java
+@@ -171,6 +171,12 @@ public class Incoming {
+     public static final int getWeeklyGameRewardEvent = 2914;
+     public static final int getWeeklyGameRewardWinnersEvent = 1054;
+     public static final int getYoutubeDisplayStatusEvent = 336;
++    public static final int setYoutubeCustomVideoEvent = 32001; // must fit a signed 16-bit short (wire header width, see GameByteDecoder) -- 90210 silently never arrived
++    public static final int setCustomUploadedVideoEvent = 32002;
++    public static final int setCustomPictureEvent = 32004;
++    public static final int setOverlayEvent = 32005;
++    public static final int throwEffectAtUserEvent = 32006;
++    public static final int pullUserEvent = 32007;
+     public static final int guideSessionCreateEvent = 3338;
+     public static final int guideSessionFeedbackEvent = 477;
+     public static final int guideSessionGetRequesterRoomEvent = 1052;
+diff --git a/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/ControlYoutubeDisplayPlaybackEvent.java b/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/ControlYoutubeDisplayPlaybackEvent.java
+index b6b5805..f97f051 100644
+--- a/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/ControlYoutubeDisplayPlaybackEvent.java
++++ b/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/ControlYoutubeDisplayPlaybackEvent.java
+@@ -52,7 +52,30 @@ public class ControlYoutubeDisplayPlaybackEvent extends YoutubeEvent {
+ 
+         if (!(item instanceof InteractionYoutubeTV tv)) return;
+ 
+-        if(tv.currentPlaylist == null || tv.currentPlaylist.getVideos().isEmpty()) return;
++        boolean isCustomUpload = tv.customVideoUrl != null && !tv.customVideoUrl.isEmpty();
++
++        if (!isCustomUpload && (tv.currentPlaylist == null || tv.currentPlaylist.getVideos().isEmpty())) return;
++
++        // Uploaded videos have no playlist to auto-advance through and no known
++        // duration server-side (the file itself carries that) -- just track
++        // playing/paused and broadcast it, the client's own <video> element handles
++        // the rest locally.
++        if (isCustomUpload) {
++            switch (state) {
++                case PAUSE -> {
++                    tv.playing = false;
++                    room.sendComposer(new YoutubeControlVideoMessageComposer(tv.getId(), 2).compose());
++                }
++                case RESUME -> {
++                    tv.playing = true;
++                    room.sendComposer(new YoutubeControlVideoMessageComposer(tv.getId(), 1).compose());
++                }
++                default -> {
++                    // PREVIOUS/NEXT don't apply to a single uploaded video.
++                }
++            }
++            return;
++        }
+ 
+         switch (state) {
+             case PAUSE -> {
+diff --git a/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/GetYoutubeDisplayStatusEvent.java b/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/GetYoutubeDisplayStatusEvent.java
+index 4dfc7fd..5502c29 100644
+--- a/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/GetYoutubeDisplayStatusEvent.java
++++ b/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/GetYoutubeDisplayStatusEvent.java
+@@ -5,7 +5,6 @@ import com.eu.habbo.habbohotel.items.YoutubeManager;
+ import com.eu.habbo.habbohotel.items.interactions.InteractionYoutubeTV;
+ import com.eu.habbo.habbohotel.users.HabboItem;
+ import com.eu.habbo.messages.incoming.MessageHandler;
+-import com.eu.habbo.messages.outgoing.handshake.ErrorReportComposer;
+ import com.eu.habbo.messages.outgoing.rooms.items.youtube.YoutubeDisplayPlaylistsComposer;
+ import lombok.extern.slf4j.Slf4j;
+ 
+@@ -27,12 +26,12 @@ public class GetYoutubeDisplayStatusEvent extends MessageHandler {
+                 ArrayList<YoutubeManager.YoutubePlaylist> playlists = Emulator.getGameEnvironment().getItemManager().getYoutubeManager().getPlaylistsForItemId(item.getBaseItem().getId());
+ 
+                 if (playlists == null) {
+-                    log.error("No YouTube playlists set for base item #" + item.getBaseItem().getId());
+-                    this.client.sendResponse(new ErrorReportComposer(1000));
+-                    return;
++                    playlists = new ArrayList<>();
+                 }
+ 
+-                this.client.sendResponse(new YoutubeDisplayPlaylistsComposer(itemId, playlists, tv.currentPlaylist));
++                boolean canSetCustomVideo = this.client.getHabbo().getHabboInfo().getPermissionGroup().getId() >= 7;
++
++                this.client.sendResponse(new YoutubeDisplayPlaylistsComposer(itemId, playlists, tv.currentPlaylist, canSetCustomVideo, tv.customPictureUrl, tv.overlayUrl));
+             }
+         }
+     }
+diff --git a/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/SetCustomPictureEvent.java b/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/SetCustomPictureEvent.java
+new file mode 100644
+index 0000000..f7b3515
+--- /dev/null
++++ b/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/SetCustomPictureEvent.java
+@@ -0,0 +1,60 @@
++package com.eu.habbo.messages.incoming.rooms.items.youtube;
++
++import com.eu.habbo.Emulator;
++import com.eu.habbo.habbohotel.items.interactions.InteractionYoutubeTV;
++import com.eu.habbo.habbohotel.rooms.Room;
++import com.eu.habbo.habbohotel.users.Habbo;
++import com.eu.habbo.habbohotel.users.HabboItem;
++import com.eu.habbo.messages.outgoing.handshake.ErrorReportComposer;
++
++/**
++ * Lets a rank 7 (Admin-only) user set a static picture on a Video TV's screen instead of
++ * a video -- either one of the built-in gallery presets or an image the admin uploaded
++ * themselves. The URL is restricted to one of the two configured base paths (gallery or
++ * upload) so this can't be used to point the screen at an arbitrary external URL. Setting
++ * a picture always clears any playing video, since the screen only has one slot to show.
++ */
++public class SetCustomPictureEvent extends YoutubeEvent {
++    private static final int REQUIRED_RANK = 7;
++
++    @Override
++    public void handle() {
++        int itemId = this.packet.readInt();
++        String url = this.packet.readString().trim();
++
++        Habbo habbo = this.client.getHabbo();
++
++        if (!validate(habbo)) return;
++
++        if (habbo.getHabboInfo().getPermissionGroup().getId() < REQUIRED_RANK) {
++            this.client.sendResponse(new ErrorReportComposer(1000));
++            return;
++        }
++
++        String galleryBase = Emulator.getConfig().getValue("custompicture.gallery.baseurl", "");
++        String uploadBase = Emulator.getConfig().getValue("custompicture.upload.baseurl", "");
++        boolean valid = (!galleryBase.isEmpty() && url.startsWith(galleryBase)) || (!uploadBase.isEmpty() && url.startsWith(uploadBase));
++
++        if (!valid) {
++            this.client.sendResponse(new ErrorReportComposer(1000));
++            return;
++        }
++
++        Room room = habbo.getHabboInfo().getCurrentRoom();
++        HabboItem item = room.getHabboItem(itemId);
++
++        if (!(item instanceof InteractionYoutubeTV tv)) return;
++
++        tv.cancelAdvancement();
++        tv.currentPlaylist = null;
++        tv.currentVideo = null;
++        tv.customVideoUrl = null;
++        tv.customPictureUrl = url;
++        tv.startedWatchingAt = 0;
++        tv.offset = 0;
++        tv.playing = false;
++
++        room.updateItem(tv);
++        item.needsUpdate(true);
++    }
++}
+diff --git a/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/SetCustomUploadedVideoEvent.java b/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/SetCustomUploadedVideoEvent.java
+new file mode 100644
+index 0000000..8c4b55f
+--- /dev/null
++++ b/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/SetCustomUploadedVideoEvent.java
+@@ -0,0 +1,58 @@
++package com.eu.habbo.messages.incoming.rooms.items.youtube;
++
++import com.eu.habbo.Emulator;
++import com.eu.habbo.habbohotel.items.interactions.InteractionYoutubeTV;
++import com.eu.habbo.habbohotel.rooms.Room;
++import com.eu.habbo.habbohotel.users.Habbo;
++import com.eu.habbo.habbohotel.users.HabboItem;
++import com.eu.habbo.messages.outgoing.handshake.ErrorReportComposer;
++
++/**
++ * Lets a rank 7 (Admin-only) user point a Video TV at a video file the admin uploaded
++ * themselves (via the Housekeeping-adjacent upload endpoint), instead of a YouTube
++ * video. The URL is restricted to the configured upload base so this can't be used to
++ * point the screen at an arbitrary external URL -- only at something that actually went
++ * through the upload flow (and, on the client, its own-content acknowledgment checkbox).
++ */
++public class SetCustomUploadedVideoEvent extends YoutubeEvent {
++    private static final int REQUIRED_RANK = 7;
++
++    @Override
++    public void handle() {
++        int itemId = this.packet.readInt();
++        String url = this.packet.readString().trim();
++
++        Habbo habbo = this.client.getHabbo();
++
++        if (!validate(habbo)) return;
++
++        if (habbo.getHabboInfo().getPermissionGroup().getId() < REQUIRED_RANK) {
++            this.client.sendResponse(new ErrorReportComposer(1000));
++            return;
++        }
++
++        String allowedBase = Emulator.getConfig().getValue("customvideo.upload.baseurl", "");
++
++        if (allowedBase.isEmpty() || !url.startsWith(allowedBase)) {
++            this.client.sendResponse(new ErrorReportComposer(1000));
++            return;
++        }
++
++        Room room = habbo.getHabboInfo().getCurrentRoom();
++        HabboItem item = room.getHabboItem(itemId);
++
++        if (!(item instanceof InteractionYoutubeTV tv)) return;
++
++        tv.cancelAdvancement();
++        tv.currentPlaylist = null;
++        tv.currentVideo = null;
++        tv.customVideoUrl = url;
++        tv.startedWatchingAt = Emulator.getIntUnixTimestamp();
++        tv.offset = 0;
++        tv.playing = true;
++
++        room.updateItem(tv);
++        room.sendComposer(new com.eu.habbo.messages.outgoing.rooms.items.youtube.CustomVideoDisplayMessageComposer(itemId, url).compose());
++        item.needsUpdate(true);
++    }
++}
+diff --git a/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/SetOverlayEvent.java b/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/SetOverlayEvent.java
+new file mode 100644
+index 0000000..497243e
+--- /dev/null
++++ b/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/SetOverlayEvent.java
+@@ -0,0 +1,52 @@
++package com.eu.habbo.messages.incoming.rooms.items.youtube;
++
++import com.eu.habbo.Emulator;
++import com.eu.habbo.habbohotel.items.interactions.InteractionYoutubeTV;
++import com.eu.habbo.habbohotel.rooms.Room;
++import com.eu.habbo.habbohotel.users.Habbo;
++import com.eu.habbo.habbohotel.users.HabboItem;
++import com.eu.habbo.messages.outgoing.handshake.ErrorReportComposer;
++
++/**
++ * Lets a rank 7 (Admin-only) user set (or clear, via an empty URL) a decorative frame/
++ * badge overlay composited on top of whatever the screen is currently showing. Unlike
++ * SetCustomPictureEvent this never touches currentVideo/customVideoUrl/customPictureUrl
++ * -- the overlay sits on top of any of those, independently.
++ */
++public class SetOverlayEvent extends YoutubeEvent {
++    private static final int REQUIRED_RANK = 7;
++
++    @Override
++    public void handle() {
++        int itemId = this.packet.readInt();
++        String url = this.packet.readString().trim();
++
++        Habbo habbo = this.client.getHabbo();
++
++        if (!validate(habbo)) return;
++
++        if (habbo.getHabboInfo().getPermissionGroup().getId() < REQUIRED_RANK) {
++            this.client.sendResponse(new ErrorReportComposer(1000));
++            return;
++        }
++
++        if (!url.isEmpty()) {
++            String galleryBase = Emulator.getConfig().getValue("overlay.gallery.baseurl", "");
++
++            if (galleryBase.isEmpty() || !url.startsWith(galleryBase)) {
++                this.client.sendResponse(new ErrorReportComposer(1000));
++                return;
++            }
++        }
++
++        Room room = habbo.getHabboInfo().getCurrentRoom();
++        HabboItem item = room.getHabboItem(itemId);
++
++        if (!(item instanceof InteractionYoutubeTV tv)) return;
++
++        tv.overlayUrl = url.isEmpty() ? null : url;
++
++        room.updateItem(tv);
++        item.needsUpdate(true);
++    }
++}
+diff --git a/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/SetYoutubeCustomVideoEvent.java b/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/SetYoutubeCustomVideoEvent.java
+new file mode 100644
+index 0000000..c355eca
+--- /dev/null
++++ b/src/main/java/com/eu/habbo/messages/incoming/rooms/items/youtube/SetYoutubeCustomVideoEvent.java
+@@ -0,0 +1,77 @@
++package com.eu.habbo.messages.incoming.rooms.items.youtube;
++
++import com.eu.habbo.Emulator;
++import com.eu.habbo.habbohotel.items.YoutubeManager;
++import com.eu.habbo.habbohotel.items.interactions.InteractionYoutubeTV;
++import com.eu.habbo.habbohotel.rooms.Room;
++import com.eu.habbo.habbohotel.users.Habbo;
++import com.eu.habbo.habbohotel.users.HabboItem;
++import com.eu.habbo.messages.outgoing.handshake.ErrorReportComposer;
++import com.eu.habbo.messages.outgoing.rooms.items.youtube.YoutubeDisplayVideoMessageComposer;
++
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/**
++ * Lets a rank 7 (Admin-only) user push an arbitrary YouTube video onto a Video TV,
++ * bypassing the normal admin-curated youtube_playlists system entirely. Reuses the
++ * existing YoutubeDisplayVideoMessageComposer/InteractionYoutubeTV plumbing -- the only
++ * new wire format is this incoming packet itself. No auto-advance is scheduled since
++ * there's no playlist context to advance through; the duration sent to the client is a
++ * generous upper bound (the real YouTube player still stops at the video's actual end,
++ * this only controls the optional server-side "end" timestamp).
++ */
++public class SetYoutubeCustomVideoEvent extends YoutubeEvent {
++    private static final int REQUIRED_RANK = 7;
++    private static final int FALLBACK_DURATION_SECONDS = 36000;
++
++    private static final Pattern VIDEO_ID_PATTERN = Pattern.compile(
++            "(?:youtube\\.com/(?:watch\\?v=|embed/|shorts/)|youtu\\.be/)([A-Za-z0-9_-]{11})|^([A-Za-z0-9_-]{11})$"
++    );
++
++    @Override
++    public void handle() {
++        int itemId = this.packet.readInt();
++        String rawInput = this.packet.readString();
++
++        Habbo habbo = this.client.getHabbo();
++
++        if (!validate(habbo)) return;
++
++        if (habbo.getHabboInfo().getPermissionGroup().getId() < REQUIRED_RANK) {
++            this.client.sendResponse(new ErrorReportComposer(1000));
++            return;
++        }
++
++        Room room = habbo.getHabboInfo().getCurrentRoom();
++        HabboItem item = room.getHabboItem(itemId);
++
++        if (!(item instanceof InteractionYoutubeTV tv)) return;
++
++        String videoId = extractVideoId(rawInput.trim());
++
++        if (videoId == null) {
++            this.client.sendResponse(new ErrorReportComposer(1000));
++            return;
++        }
++
++        tv.cancelAdvancement();
++        tv.currentPlaylist = null;
++        tv.currentVideo = new YoutubeManager.YoutubeVideo(videoId, FALLBACK_DURATION_SECONDS);
++        tv.startedWatchingAt = Emulator.getIntUnixTimestamp();
++        tv.offset = 0;
++        tv.playing = true;
++
++        room.updateItem(tv);
++        room.sendComposer(new YoutubeDisplayVideoMessageComposer(itemId, tv.currentVideo, true, 0).compose());
++        item.needsUpdate(true);
++    }
++
++    private String extractVideoId(String input) {
++        Matcher matcher = VIDEO_ID_PATTERN.matcher(input);
++
++        if (!matcher.find()) return null;
++
++        return matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
++    }
++}
+diff --git a/src/main/java/com/eu/habbo/messages/incoming/rooms/users/PullUserEvent.java b/src/main/java/com/eu/habbo/messages/incoming/rooms/users/PullUserEvent.java
+new file mode 100644
+index 0000000..e210b86
+--- /dev/null
++++ b/src/main/java/com/eu/habbo/messages/incoming/rooms/users/PullUserEvent.java
+@@ -0,0 +1,31 @@
++package com.eu.habbo.messages.incoming.rooms.users;
++
++import com.eu.habbo.Emulator;
++import com.eu.habbo.habbohotel.rooms.Room;
++import com.eu.habbo.habbohotel.users.Habbo;
++import com.eu.habbo.messages.incoming.MessageHandler;
++import com.eu.habbo.threading.runnables.RoomUnitWalkToRoomUnit;
++
++/**
++ * Lets any player make another player standing in the same room walk over to them --
++ * a friendly "silly macro" gesture, not a teleport. Reuses the same
++ * RoomUnitWalkToRoomUnit pathfinding already used for e.g. passing a hand-carried item
++ * (PassCarryItemEvent), just with the walker/target roles swapped: there, the sender
++ * walks to the recipient; here, the target walks to the sender.
++ */
++public class PullUserEvent extends MessageHandler {
++    @Override
++    public void handle() {
++        int userId = this.packet.readInt();
++
++        Room room = this.client.getHabbo().getHabboInfo().getCurrentRoom();
++
++        if (room == null) return;
++
++        Habbo target = room.getHabbo(userId);
++
++        if (target == null || target == this.client.getHabbo()) return;
++
++        Emulator.getThreading().run(new RoomUnitWalkToRoomUnit(target.getRoomUnit(), this.client.getHabbo().getRoomUnit(), room, null, null));
++    }
++}
+diff --git a/src/main/java/com/eu/habbo/messages/incoming/rooms/users/ThrowEffectAtUserEvent.java b/src/main/java/com/eu/habbo/messages/incoming/rooms/users/ThrowEffectAtUserEvent.java
+new file mode 100644
+index 0000000..0c065d8
+--- /dev/null
++++ b/src/main/java/com/eu/habbo/messages/incoming/rooms/users/ThrowEffectAtUserEvent.java
+@@ -0,0 +1,37 @@
++package com.eu.habbo.messages.incoming.rooms.users;
++
++import com.eu.habbo.habbohotel.rooms.Room;
++import com.eu.habbo.habbohotel.users.Habbo;
++import com.eu.habbo.messages.incoming.MessageHandler;
++
++import java.util.Set;
++
++/**
++ * Lets any player throw one of a small curated set of cosmetic effects onto another
++ * player standing in the same room -- a "silly macro" button, not a moderation tool, so
++ * there's no rank gate. The effect ID is restricted to a fixed whitelist (matching the
++ * icons offered client-side) so a modified client can't force an arbitrary/inappropriate
++ * effect onto someone; the duration is fixed server-side for the same reason.
++ */
++public class ThrowEffectAtUserEvent extends MessageHandler {
++    private static final Set<Integer> ALLOWED_EFFECT_IDS = Set.of(9, 7, 4, 13); // Love, Butterflies, Twinkle, Ghost
++    private static final int EFFECT_DURATION_SECONDS = 8;
++
++    @Override
++    public void handle() {
++        int userId = this.packet.readInt();
++        int effectId = this.packet.readInt();
++
++        if (!ALLOWED_EFFECT_IDS.contains(effectId)) return;
++
++        Room room = this.client.getHabbo().getHabboInfo().getCurrentRoom();
++
++        if (room == null) return;
++
++        Habbo target = room.getHabbo(userId);
++
++        if (target == null || target == this.client.getHabbo()) return;
++
++        room.giveEffect(target, effectId, EFFECT_DURATION_SECONDS);
++    }
++}
+diff --git a/src/main/java/com/eu/habbo/messages/outgoing/Outgoing.java b/src/main/java/com/eu/habbo/messages/outgoing/Outgoing.java
+index 354eb7b..0e52f57 100644
+--- a/src/main/java/com/eu/habbo/messages/outgoing/Outgoing.java
++++ b/src/main/java/com/eu/habbo/messages/outgoing/Outgoing.java
+@@ -481,6 +481,7 @@ public class Outgoing {
+     public static final int youtubeControlVideoMessageComposer = 1554;
+     public static final int youtubeDisplayPlaylistsComposer = 1112;
+     public static final int youtubeDisplayVideoMessageComposer = 1411;
++    public static final int customVideoDisplayMessageComposer = 32003; // must fit a signed 16-bit short, see GameByteDecoder
+ 
+     /**
+      * Snowstorm incoming packets, which are not from PRODUCTION-201611291003-338511768, but are in the OpenSource SWF.
+diff --git a/src/main/java/com/eu/habbo/messages/outgoing/rooms/items/youtube/CustomVideoDisplayMessageComposer.java b/src/main/java/com/eu/habbo/messages/outgoing/rooms/items/youtube/CustomVideoDisplayMessageComposer.java
+new file mode 100644
+index 0000000..c79d489
+--- /dev/null
++++ b/src/main/java/com/eu/habbo/messages/outgoing/rooms/items/youtube/CustomVideoDisplayMessageComposer.java
+@@ -0,0 +1,23 @@
++package com.eu.habbo.messages.outgoing.rooms.items.youtube;
++
++import com.eu.habbo.messages.ServerMessage;
++import com.eu.habbo.messages.outgoing.MessageComposer;
++import com.eu.habbo.messages.outgoing.Outgoing;
++
++public class CustomVideoDisplayMessageComposer extends MessageComposer {
++    private final int itemId;
++    private final String url;
++
++    public CustomVideoDisplayMessageComposer(int itemId, String url) {
++        this.itemId = itemId;
++        this.url = url;
++    }
++
++    @Override
++    protected ServerMessage composeInternal() {
++        this.response.init(Outgoing.customVideoDisplayMessageComposer);
++        this.response.appendInt(this.itemId);
++        this.response.appendString(this.url);
++        return this.response;
++    }
++}
+diff --git a/src/main/java/com/eu/habbo/messages/outgoing/rooms/items/youtube/YoutubeDisplayPlaylistsComposer.java b/src/main/java/com/eu/habbo/messages/outgoing/rooms/items/youtube/YoutubeDisplayPlaylistsComposer.java
+index 8f511c2..068229b 100644
+--- a/src/main/java/com/eu/habbo/messages/outgoing/rooms/items/youtube/YoutubeDisplayPlaylistsComposer.java
++++ b/src/main/java/com/eu/habbo/messages/outgoing/rooms/items/youtube/YoutubeDisplayPlaylistsComposer.java
+@@ -13,6 +13,9 @@ public class YoutubeDisplayPlaylistsComposer extends MessageComposer {
+     private final int itemId;
+     private final ArrayList<YoutubeManager.YoutubePlaylist> playlists;
+     private final YoutubeManager.YoutubePlaylist currentPlaylist;
++    private final boolean canSetCustomVideo;
++    private final String customPictureUrl;
++    private final String overlayUrl;
+ 
+ 
+     @Override
+@@ -28,6 +31,9 @@ public class YoutubeDisplayPlaylistsComposer extends MessageComposer {
+         }
+ 
+         this.response.appendString(this.currentPlaylist == null ? "" : this.currentPlaylist.getId()); // current playlist ID
++        this.response.appendBoolean(this.canSetCustomVideo);
++        this.response.appendString(this.customPictureUrl == null ? "" : this.customPictureUrl);
++        this.response.appendString(this.overlayUrl == null ? "" : this.overlayUrl);
+         return this.response;
+     }
+ }
+\ No newline at end of file

@@ -19,7 +19,7 @@ RUN cp target/NitroWebsockets-*.jar target/websockets.jar
 
 FROM maven:3-amazoncorretto-19 AS builder-ms4
 
-ARG BRANCH=ms4/dev
+ARG BRANCH=archived/ms4/dev
 ARG COMMIT=3bb8ce16
 
 RUN yum install -y git

@@ -1,0 +1,31 @@
+diff --git a/src/main/java/com/eu/habbo/habbohotel/catalog/marketplace/MarketPlace.java b/src/main/java/com/eu/habbo/habbohotel/catalog/marketplace/MarketPlace.java
+index 45a7be0a..a60f68ad 100644
+--- a/src/main/java/com/eu/habbo/habbohotel/catalog/marketplace/MarketPlace.java
++++ b/src/main/java/com/eu/habbo/habbohotel/catalog/marketplace/MarketPlace.java
+@@ -113,7 +113,7 @@ public class MarketPlace {
+ 
+     public static List<MarketPlaceOffer> getOffers(int minPrice, int maxPrice, String search, int sort) {
+         List<MarketPlaceOffer> offers = new ArrayList<>(10);
+-        String query = "SELECT B.* FROM marketplace_items a INNER JOIN (SELECT b.item_id AS base_item_id, b.limited_data AS ltd_data, marketplace_items.*, AVG(price) as avg, MIN(marketplace_items.price) as minPrice, MAX(marketplace_items.price) as maxPrice, COUNT(*) as number, (SELECT COUNT(*) FROM marketplace_items c INNER JOIN items as items_b ON c.item_id = items_b.id WHERE state = 2 AND items_b.item_id = base_item_id AND DATE(from_unixtime(sold_timestamp)) = CURDATE()) as sold_count_today FROM marketplace_items INNER JOIN items b ON marketplace_items.item_id = b.id INNER JOIN items_base bi ON b.item_id = bi.id INNER JOIN catalog_items ci ON bi.id = ci.item_ids WHERE price = (SELECT MIN(e.price) FROM marketplace_items e, items d WHERE e.item_id = d.id AND d.item_id = b.item_id AND e.state = 1 AND e.timestamp > ? GROUP BY d.item_id) AND state = 1 AND timestamp > ?";
++        String query = "SELECT * FROM (SELECT b.item_id AS base_item_id, b.limited_data AS ltd_data, marketplace_items.*, AVG(price) OVER (PARTITION BY b.item_id, b.limited_data) as avg, MIN(marketplace_items.price) OVER (PARTITION BY b.item_id, b.limited_data) as minPrice, MAX(marketplace_items.price) OVER (PARTITION BY b.item_id, b.limited_data) as maxPrice, COUNT(*) OVER (PARTITION BY b.item_id, b.limited_data) as number, (SELECT COUNT(*) FROM marketplace_items c INNER JOIN items as items_b ON c.item_id = items_b.id WHERE state = 2 AND items_b.item_id = base_item_id AND DATE(from_unixtime(sold_timestamp)) = CURDATE()) as sold_count_today, ROW_NUMBER() OVER (PARTITION BY b.item_id, b.limited_data ORDER BY marketplace_items.price ASC) as rn FROM marketplace_items INNER JOIN items b ON marketplace_items.item_id = b.id INNER JOIN items_base bi ON b.item_id = bi.id INNER JOIN catalog_items ci ON bi.id = ci.item_ids WHERE price = (SELECT MIN(e.price) FROM marketplace_items e, items d WHERE e.item_id = d.id AND d.item_id = b.item_id AND e.state = 1 AND e.timestamp > ? GROUP BY d.item_id) AND state = 1 AND timestamp > ?";
+         if (minPrice > 0) {
+             query += " AND CEIL(price + (price / 100)) >= " + minPrice;
+         }
+@@ -124,8 +124,6 @@ public class MarketPlace {
+             query += " AND ( bi.public_name LIKE ? OR ci.catalog_name LIKE ? ) ";
+         }
+ 
+-        query += " GROUP BY base_item_id, ltd_data";
+-
+         switch (sort) {
+             case 6:
+                 query += " ORDER BY number ASC";
+@@ -150,7 +148,7 @@ public class MarketPlace {
+ 
+         query += ")";
+ 
+-        query += " AS B ON a.id = B.id";
++        query += " AS B WHERE B.rn = 1";
+ 
+         query += " LIMIT 250";
+ 

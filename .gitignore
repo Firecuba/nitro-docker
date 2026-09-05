@@ -30,3 +30,7 @@ atomcms/gamedata/*
 !atomcms/gamedata/.gitkeep
 tls/cert.pem
 tls/privkey.pem
+tls/catalog_panel.htpasswd
+assets/usercontent/customvideos/
+assets/usercontent/custompictures/
+arcturus/plugins-src/
